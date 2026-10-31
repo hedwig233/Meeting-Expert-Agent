@@ -1,0 +1,2 @@
+# Application runtime uses only the Python standard library (Python >= 3.9).
+# No third-party packages are required to start server.py or run unit tests.
