@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, BookOpen, Check, Headphones, LoaderCircle, Mic, Play, Plus, Send, Sparkles, Square, Upload, Volume2, X } from 'lucide-react';
+import { AudioLines, BookOpen, Check, ChevronRight, Headphones, LoaderCircle, Mic, Play, Plus, Send, ShieldCheck, Sparkles, Square, Volume2, X } from 'lucide-react';
 import { captureDesktop, listOutputDevices, routeAudio } from './desktop-audio';
 import type { DesktopCapture } from './desktop-audio';
-import type { Config, Document, ExpertMessage, KnowledgeScope, Session } from './types';
-import KnowledgeScopeSelect from './KnowledgeScopeSelect';
+import type { Config, ExpertMessage, Session } from './types';
+import WorkspaceNav from './WorkspaceNav';
 import { containsWakeCommand } from './wake-word.mjs';
 
 type BridgeConfig = Config & { provider?: string; speech?: boolean; speechProvider?: string; speechModel?: string; speechVoice?: string };
@@ -15,8 +15,6 @@ async function request<T>(path: string, body?: unknown, method = body === undefi
 export default function Bridge() {
   const [config, setConfig] = useState<BridgeConfig | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [docs, setDocs] = useState<Document[]>([]);
-  const [uploadScope, setUploadScope] = useState<KnowledgeScope>('shared');
   const [role, setRole] = useState<'architecture' | 'evidence'>('evidence');
   const [connected, setConnected] = useState(false); const [listening, setListening] = useState(false);
   const [busy, setBusy] = useState(false); const [speaking, setSpeaking] = useState(false);
@@ -35,7 +33,7 @@ export default function Bridge() {
   const speechPlayer = useRef<HTMLAudioElement>(null); const speechUrl = useRef<string | null>(null);
   const triggerRef = useRef({ text: trigger, enabled: autoTrigger });
   const consultRef = useRef<(text?: string) => Promise<void>>(async () => {});
-  const seenTriggers = useRef(new Set<string>()); const upload = useRef<HTMLInputElement>(null);
+  const seenTriggers = useRef(new Set<string>());
   const resumeAfterSpeech = useRef(false); const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => { sessionRef.current = session; }, [session]);
@@ -44,8 +42,8 @@ export default function Bridge() {
     let active = true;
     (async () => {
       try {
-        const [c, d] = await Promise.all([request<BridgeConfig>('/config'), request<Document[]>('/documents')]);
-        if (!active) return; setConfig(c); setDocs(d);
+        const c = await request<BridgeConfig>('/config');
+        if (!active) return; setConfig(c);
         let s: Session | null = null; const saved = sessionStorage.getItem('seat-bridge-session');
         if (saved) { try { s = await request<Session>('/sessions/' + saved); } catch { /* deleted local session */ } }
         if (!s || s.status === 'ended') s = await request<Session>('/sessions', { title: '宫廷证据评审会', expertRole: 'evidence' });
@@ -193,22 +191,12 @@ export default function Bridge() {
       setTrigger(newRole === 'evidence' ? '请太医发言' : '请专家发言'); sessionStorage.setItem('seat-bridge-session', s.id);
     } catch (e) { setError((e as Error).message); }
   }
-  async function uploadKnowledge(file: File) {
-    try {
-      if (!/\.(md|txt)$/i.test(file.name) || file.size > 300000) throw new Error('请选择不超过 300 KB 的 Markdown 或 TXT 文件。');
-      const doc = await request<Document>('/documents', { title: file.name, content: await file.text(), scope: uploadScope }); setDocs(previous => [...previous, doc]); setStatus('知识资料已加入');
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  async function changeDocumentScope(id: string, scope: KnowledgeScope) {
-    try {
-      const doc = await request<Document>('/documents/' + id, { scope }, 'PATCH');
-      setDocs(previous => previous.map(item => item.id === id ? doc : item));
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  return <main className="bridge-app">
-    <header className="bridge-header"><a className="bridge-brand" href="/">席位 <span>SEAT</span></a><div><h1>腾讯会议 Bot 控制台</h1><p>用独立腾讯会议账号入会；此页负责实时听会、专家分析与语音回传。</p></div><button onClick={() => createNew()} disabled={busy}><Plus size={15} /> 新会话</button></header>
+  return <div className="app-shell bridge-room">
+    <WorkspaceNav page="bridge" />
+    <div className="workspace">
+      <header className="topbar"><div className="wordmark">席位 <span>SEAT</span></div><div className="breadcrumb">工作空间 <ChevronRight size={13} /> 实时会议中枢</div><div className="top-actions"><span className="local-label"><ShieldCheck size={14} /> 本地工作空间</span><button className="button ghost small" onClick={() => createNew()} disabled={busy}><Plus size={15} /> 新会话</button></div></header>
+      <main className="bridge-app">
+    <header className="page-heading"><div><div className="eyebrow">IN SYNC WITH EVERY CONVERSATION</div><h1>让现场讨论，汇成共识<span>。</span></h1><p>连接腾讯会议，让专家实时听会、分析与语音回应。</p></div></header>
     <div className="bridge-status" role="status"><span className={connected ? 'connected-dot' : 'disconnected-dot'} />{status}<small>{config?.model} / {config?.asrModel}</small>{!connected && <button onClick={() => setReconnect(x => x + 1)}>重新连接</button>}</div>
     {error && <div className="bridge-alert" role="alert"><span>{error}</span><button aria-label="关闭提示" onClick={() => setError('')}><X size={16} /></button></div>}
     <section className="bridge-setup">
@@ -224,8 +212,9 @@ export default function Bridge() {
       <section className="bridge-panel"><div className="bridge-panel-heading"><h2><AudioLines size={17} /> 实时会议内容</h2><span>{session?.segments.length || 0} 段</span></div><div className="bridge-transcripts">{!session?.segments.length && <div className="bridge-empty">开始监听后，让另一位参会者说一句话。<br />这里应出现真实转写，而非预置字幕。</div>}{session?.segments.map(segment => <article key={segment.id}><div><strong>{segment.speaker}</strong><span>{Math.floor(segment.start)}s · {segment.source === 'next_omni' ? 'Qwen Omni 云转写' : segment.source === 'local_whisper' ? 'Whisper 本地转写' : segment.source === 'openai' ? 'OpenAI 实时转写' : segment.source === 'dui' ? '思必驰转写' : '文字补充'}</span></div><p>{segment.text}</p></article>)}{partial && <p className="bridge-partial">{partial}…</p>}</div><a className="bridge-export" href={session ? '/api/sessions/' + session.id + '/export' : '#'} download>导出当前会议记录</a></section>
       <section className="bridge-panel"><div className="bridge-panel-heading"><h2><Sparkles size={17} />{role === 'evidence' ? '太医 / 证据评审专家' : '架构评审专家'}</h2><select aria-label="专家角色" value={role} onChange={e => createNew(e.target.value as 'evidence' | 'architecture')} disabled={busy || listening}><option value="evidence">宫廷证据评审</option><option value="architecture">技术方案评审</option></select></div><div className="bridge-experts">{!session?.messages.length && <div className="bridge-empty">专家只依据已经听到的讨论和检索资料回答。<br />缺少证据时应提问，不能提前知道剧情真相。</div>}{session?.messages.map(message => <article key={message.id}><small>{message.provider === 'openai_next' ? 'Next 专家' : message.provider === 'openai' ? 'OpenAI' : '本地演示'} · {message.confidence}</small><p className="bridge-summary">{message.contextSummary}</p><h3>{message.finding}</h3><p>{message.impact}</p><p className="bridge-followup">{message.question}</p><p>{message.proposal}</p>{message.citations.map(source => <details key={source.id}><summary><BookOpen size={12} />{source.title} · {source.heading}</summary><pre>{source.text}</pre></details>)}</article>)}{busy && <div className="bridge-thinking"><LoaderCircle size={18} />{status}</div>}</div><div className="bridge-composer"><label><input type="checkbox" checked={autoTrigger} onChange={e => setAutoTrigger(e.target.checked)} /> 听到口令时发言<input aria-label="召唤口令" value={trigger} onChange={e => setTrigger(e.target.value)} maxLength={30} /></label><form onSubmit={e => { e.preventDefault(); void consult(); }}><textarea aria-label="专家问题" placeholder="输入追问，或直接邀请专家分析当前讨论…" value={question} onChange={e => setQuestion(e.target.value)} maxLength={3000} /><button className="bridge-primary" disabled={busy || speaking || !session?.segments.length || !connected}><Send size={15} /> 请专家发言</button></form><div className="bridge-voice-controls">{voiceReady && !speaking && <button onClick={() => { if (speechPlayer.current) void routeAudio(speechPlayer.current, output).then(() => speechPlayer.current!.play()).then(() => setSpeaking(true)).catch(e => setError(e.message)); }}><Play size={14} /> 播放已生成语音</button>}{(speaking || busy) && <button onClick={stopVoice}><Square size={14} /> 停止发言 / 取消</button>}</div></div></section>
     </div>
-    <section className="bridge-knowledge"><h2><BookOpen size={17} /> 专家知识库 <span>{docs.length} 份</span></h2><p>所有资料保存在同一个数据库。专家检索公共知识和自己的专属知识；上传前可选择范围，已有资料也可修改范围。按当前转写配置处理音频：选择 Qwen Omni 时原音频会发送到 Next；专家分析时文字和检索资料会发送到模型平台。选择 Qwen 专家语音时，朗读文字也会发送到 Next。</p><KnowledgeScopeSelect label="上传知识范围" value={uploadScope} onChange={setUploadScope} /> <button onClick={() => upload.current?.click()}><Upload size={14} /> 添加 Markdown / TXT</button><input ref={upload} type="file" hidden accept=".md,.txt" onChange={e => { if (e.target.files?.[0]) void uploadKnowledge(e.target.files[0]); e.target.value = ''; }} /><div>{docs.map(d => <details key={d.id}><summary>{d.title}</summary><KnowledgeScopeSelect label={d.title + "的知识范围"} value={d.scope || "shared"} onChange={scope => { void changeDocumentScope(d.id, scope); }} /><pre>{d.content}</pre></details>)}</div></section>
     <audio ref={speechPlayer} onEnded={finishSpeech} onError={() => { setError('专家音频播放失败，请检查输出设备。'); finishSpeech(); }} />
     <footer className="bridge-footer">这是桌面音频桥接：登录、入会、主持人准入由腾讯会议客户端完成。结束使用时停止监听并退出 Bot 账号。</footer>
-  </main>;
+      </main>
+    </div>
+  </div>;
 }

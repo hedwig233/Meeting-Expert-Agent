@@ -1,0 +1,136 @@
+:root {
+  color-scheme: dark;
+  --font-ui: 'DM Sans', 'Noto Sans SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --text-title: 2rem;
+  --text-section: 1rem;
+  --text-body: .875rem;
+  --text-label: .8125rem;
+  --text-caption: .75rem;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.rail-bottom { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.workspace-dialog { color: inherit; margin: auto; overflow-wrap: anywhere; }
+.workspace-dialog::backdrop { background: light-dark(#182b3b55, #03070bd9); backdrop-filter: blur(8px); }
+.workspace-dialog :is(button, select, input, pre) { font-family: var(--font-ui); }
+.workspace-dialog :is(p, select, button, .document-list summary strong, .document-content) { font-size: var(--text-body); }
+.workspace-dialog .document-list summary strong { flex: 1; }
+.workspace-dialog select {
+  min-width: 0; max-width: 100%; padding: 9px 10px; border-radius: 6px;
+  border: 1px solid light-dark(#cad4c8, #3a4b3b);
+  background: light-dark(#f6f8fa, #0f181d); color: inherit;
+}
+.workspace-dialog fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.knowledge-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.workspace-dialog .document-scope-control { padding: 0 14px 14px; }
+.knowledge-hint { font-size: var(--text-caption) !important; }
+.knowledge-error { color: light-dark(#a33b1f, #efb79a); }
+.workspace-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.appearance-dialog { width: 560px; }
+.appearance-dialog .theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 24px 0; }
+.theme-options legend { margin-bottom: 8px; font-size: var(--text-body); }
+.appearance-dialog .theme-options label {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px;
+  padding: 14px 8px; margin: 0; cursor: pointer; border: 1px solid light-dark(#c9d5c4, #354232); border-radius: 8px;
+  font-size: var(--text-label); color: inherit;
+}
+.appearance-dialog .theme-options label:has(:checked) { background: light-dark(#eaf2df, #263622); border-color: light-dark(#708a50, #84a660); }
+.appearance-dialog .theme-options input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: #81a94f; }
+.appearance-dialog .appearance-range { display: flex; flex-wrap: wrap; justify-content: space-between; font-size: var(--text-body); color: inherit; }
+.appearance-dialog .appearance-range input { flex-basis: 100%; height: 24px; padding: 0; border: 0; margin: 10px 0 0; accent-color: #81a94f; }
+.appearance-preview { padding: 18px; border: 1px solid light-dark(#c9d5c4, #354232); border-radius: 8px; line-height: 2; }
+.appearance-preview > span { font-size: var(--text-label); }
+
+/* Accent text needs a deeper green on light surfaces; primary button fills keep their lime. */
+:root { --accent-ink: light-dark(#4b721d, #c0ee81); }
+.page-heading h1 > span, .eyebrow, .rail-button.active,
+.minutes-room :is(.workflow-strip .current > span, .workflow-strip .done > span),
+.minutes-room .text-button { color: var(--accent-ink); }
+
+@media (max-width: 550px) {
+  .workspace-dialog { max-height: 90dvh; }
+  .knowledge-controls { align-items: stretch; flex-direction: column; }
+  .appearance-dialog .theme-options { grid-template-columns: 1fr; gap: 7px; }
+  .appearance-dialog .theme-options label { justify-content: flex-start; padding: 10px; }
+}
+
+.app-shell :is(button, input, textarea, select, pre) {
+  font-family: var(--font-ui);
+}
+
+.rail-nav { display: flex; flex-direction: column; gap: 14px; }
+.rail-button { position: relative; }
+.rail-tooltip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 7px 11px;
+  border:1px solid light-dark(hsl(109 14% 80%), #354232);
+  border-radius:6px;
+  background:light-dark(hsl(150 18% 92%), #1c2822);
+  color:light-dark(hsl(91 38% 27%), #d0e2bf);
+  font-size: var(--text-label);
+  font-weight: 450;
+  white-space: nowrap;
+  box-shadow:0 6px 18px #0005;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.rail-button:is(:hover, :focus-visible) .rail-tooltip { opacity: 1; visibility: visible; }
+
+.bridge-room .bridge-app { max-width: 1530px; padding: 36px 40px 18px; }
+.bridge-room .bridge-app .page-heading p { font-size: var(--text-body); }
+
+.app-shell .page-heading h1 { font-size: var(--text-title); }
+
+.minutes-room :is(.panel h2, .task-select h3, .minutes-overview strong),
+.bridge-room :is(.bridge-setup h2, .bridge-panel-heading h2) {
+  font-size: var(--text-section);
+  font-weight: 550;
+}
+
+.minutes-room :is(.page-heading p, .minutes-summary p, .task-select p, .transcript-line p, .answer-question, .answer-card .finding p, .answer-card .finding-label, .answer-details > p, .minutes-text, .document-content, .composer-input textarea, .expert-welcome p),
+.bridge-room :is(.bridge-setup p, .bridge-transcripts p, .bridge-experts h3, .bridge-experts p, .bridge-experts pre, .bridge-composer textarea, .bridge-empty) {
+  font-size: var(--text-body);
+  line-height: 1.9;
+}
+
+.app-shell .topbar .button,
+.minutes-room :is(.button, .modal .modal-actions .button, .minutes-empty .button, .expert-tabs button, .answer-toolbar input),
+.bridge-room .bridge-app :is(button, select, input:not([type=checkbox])) {
+  font-size: var(--text-body);
+}
+
+.minutes-room :is(.task-facts, .task-source, .answer-details, .task-assist .text-button, .minutes-overview > .text-button, .modal label),
+.bridge-room :is(.bridge-composer label, .bridge-export, .bridge-experts details, .bridge-status) {
+  font-size: var(--text-label);
+}
+
+.minutes-room :is(.minutes-summary small, .minutes-overview div > span, .task-card-meta, .task-assist > span, .answer-task, .answer-model, .composer-foot, .composer-foot .text-button, .meeting-footer > span, .page-footer),
+.bridge-room :is(.bridge-setup small, .bridge-experts small, .bridge-panel-heading > span, .bridge-transcripts article > div, .bridge-footer) {
+  font-size: var(--text-caption);
+}
+
+@media (min-width: 1550px) {
+  .bridge-room .bridge-app { padding-top: 45px; }
+}
+@media (max-width: 1150px) {
+  :root { --text-section: .9375rem; }
+  .bridge-room .bridge-app { padding: 28px 25px 18px; }
+}
+@media (max-width: 900px) {
+  :root { --text-title: 1.75rem; }
+}
+@media (max-width: 550px) {
+  :root { --text-title: 1.5rem; --text-section: .875rem; }
+  .rail-nav { gap: 14px; }
+  .bridge-room .bridge-app { padding: 23px 13px 15px; }
+  .bridge-room .topbar { gap: 10px; }
+  .bridge-room .wordmark span { display: none; }
+  .app-shell .topbar .button { padding: 8px 9px; }
+  .bridge-room .bridge-panel-heading { flex-wrap: wrap; }
+}

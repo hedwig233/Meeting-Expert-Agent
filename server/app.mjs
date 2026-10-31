@@ -14,6 +14,7 @@ import { localSpeech } from './local-speech.mjs';
 import { transcribeNextOmni } from './next-omni-asr.mjs';
 import { synthesizeNextOmniSpeech } from './next-omni-speech.mjs';
 import { DOCUMENT_SCOPES } from './knowledge.mjs';
+import { mountMinutesRoutes, resolveMinutesConfig } from './minutes.mjs';
 
 export function createApplication({ root, database, config = {}, speechSynthesizer = synthesizeSpeech, nextSpeechSynthesizer = synthesizeNextOmniSpeech }) {
   const app = express(); const server = createServer(app); const store = createStore(root, database);
@@ -33,6 +34,7 @@ export function createApplication({ root, database, config = {}, speechSynthesiz
     res.setHeader("X-Content-Type-Options", "nosniff"); next();
   });
   app.use(express.json({ limit: "512kb" }));
+  mountMinutesRoutes(app, resolveMinutesConfig(config));
   const send = (socket, event) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); };
   const broadcast = (id, event) => { for (const peer of peers.get(id) || []) send(peer, event); };
   const requireSession = (req, res, next) => { req.session = store.get(req.params.id); if (!req.session) return res.status(404).json({ error: "会议不存在。" }); next(); };

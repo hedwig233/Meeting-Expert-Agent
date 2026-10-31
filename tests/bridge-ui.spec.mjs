@@ -1,6 +1,96 @@
 import { test, expect } from '@playwright/test';
 import { wavHeader } from '../server/asr.mjs';
 
+test('shared enterprise knowledge uploads, previews and changes scope from either page', async ({ page }) => {
+  await mockBridge(page);
+  const docs = [{ id: 'd1', title: '团队规范', content: '先核对来源。', scope: 'shared' }];
+  let rejectScope = true;
+  await page.route('**/api/documents**', async route => {
+    const request = route.request();
+    if (request.method() === 'POST') {
+      const doc = { id: 'd2', ...request.postDataJSON() }; docs.push(doc);
+      return route.fulfill({ status: 201, json: doc });
+    }
+    if (request.method() === 'PATCH') {
+      if (rejectScope) { rejectScope = false; return route.fulfill({ status: 503, json: { error: '保存失败，请重试' } }); }
+      const doc = docs.find(item => request.url().endsWith('/' + item.id));
+      Object.assign(doc, request.postDataJSON()); return route.fulfill({ json: doc });
+    }
+    return route.fulfill({ json: docs });
+  });
+  await page.goto('/');
+  await expect(page.getByText('等待导入会议纪要', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '企业知识库', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: '企业知识库' });
+  await expect(dialog.getByText('团队规范', { exact: true })).toBeVisible();
+  await dialog.getByLabel('上传知识范围').selectOption('technical');
+  await dialog.locator('input[type=file]').setInputFiles({ name: '交付规范.md', mimeType: 'text/markdown', buffer: Buffer.from('先评审，再交付。') });
+  await dialog.getByText('交付规范.md', { exact: true }).click();
+  await expect(dialog.locator('pre').last()).toHaveText('先评审，再交付。');
+  const scope = dialog.getByLabel('知识范围：交付规范.md');
+  await expect(scope).toHaveValue('technical');
+  await scope.selectOption('palace'); await expect(dialog.getByRole('alert')).toContainText('保存失败');
+  await expect(scope).toHaveValue('technical');
+  await scope.selectOption('palace'); await expect(scope).toHaveValue('palace');
+  await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible();
+  await page.getByRole('link', { name: '实时会议中枢', exact: true }).click();
+  await expect(page.locator('h1')).toHaveText('让现场讨论，汇成共识。');
+  await expect(page.locator('.bridge-knowledge')).toHaveCount(0);
+  await page.getByRole('button', { name: '企业知识库', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: '企业知识库' });
+  await dialog.getByText('交付规范.md', { exact: true }).click();
+  await expect(dialog.getByLabel('知识范围：交付规范.md')).toHaveValue('palace');
+});
+
+test('appearance settings persist across pages and reloads with matching typography and responsive themes', async ({ page }) => {
+  await mockBridge(page); await page.goto('/');
+  const typography = async () => {
+    await expect(page.locator('.page-heading h1')).toBeVisible();
+    return page.evaluate(() => ['.page-heading h1', '.page-heading p'].map(selector => {
+      const style = getComputedStyle(document.querySelector(selector)); return [style.fontFamily, style.fontSize];
+    }));
+  };
+  const background = () => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+  const defaultType = await typography(); const darkBackground = await background();
+  expect(darkBackground).toBe('rgb(11, 14, 21)');
+  await page.getByRole('button', { name: '显示设置' }).click();
+  let dialog = page.getByRole('dialog', { name: '显示设置' });
+  await dialog.getByRole('radio', { name: '浅色模式' }).check();
+  await dialog.getByRole('slider', { name: '字体大小' }).press('ArrowRight');
+  await dialog.getByRole('slider', { name: '字体大小' }).press('ArrowRight');
+  await dialog.getByRole('slider', { name: '页面缩放' }).press('ArrowRight');
+  await dialog.getByRole('slider', { name: '页面缩放' }).press('ArrowRight');
+  const largerType = await typography(); expect(parseFloat(largerType[1][1])).toBeGreaterThan(parseFloat(defaultType[1][1]));
+  expect(await background()).not.toBe(darkBackground);
+  await dialog.getByRole('button', { name: '完成' }).click();
+  await page.getByRole('link', { name: '实时会议中枢', exact: true }).click();
+  expect(await typography()).toEqual(largerType);
+  await page.reload(); expect(await typography()).toEqual(largerType);
+  await page.getByRole('button', { name: '显示设置' }).click();
+  dialog = page.getByRole('dialog', { name: '显示设置' });
+  await expect(dialog.getByRole('radio', { name: '浅色模式' })).toBeChecked();
+  await expect(dialog.getByRole('slider', { name: '字体大小' })).toHaveValue('18');
+  await expect(dialog.getByRole('slider', { name: '页面缩放' })).toHaveValue('110');
+  await dialog.getByRole('radio', { name: '跟随系统' }).check();
+  await page.emulateMedia({ colorScheme: 'dark' }); expect(await background()).toBe(darkBackground);
+  await page.emulateMedia({ colorScheme: 'light' }); expect(await background()).not.toBe(darkBackground);
+  await dialog.getByRole('button', { name: '恢复默认' }).click();
+  await expect(dialog.getByRole('slider', { name: '字体大小' })).toHaveValue('16');
+  await dialog.getByRole('radio', { name: '浅色模式' }).check();
+  await dialog.getByRole('button', { name: '完成' }).click();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.screenshot({ path: `test-results/workspace-bridge-light-${width}.png`, fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('link', { name: '专家会议室', exact: true }).click();
+    const minutesType = await typography();
+    await page.screenshot({ path: `test-results/workspace-minutes-light-${width}.png`, fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('link', { name: '实时会议中枢', exact: true }).click();
+    expect(await typography()).toEqual(minutesType);
+  }
+});
+
 async function mockBridge(page, withAudio = true) {
   const session = { id: 'bridge-test-session', title: '宫廷证据评审会', expertRole: 'evidence', status: 'active', segments: [], messages: [], decisions: [], audioSeconds: 0 };
   await page.route('**/api/**', async route => {
@@ -63,6 +153,7 @@ test('desktop bridge captures real browser audio frames, displays suggestions, a
   await expect(page.locator('.bridge-experts')).toContainText('水样来源尚未确认');
   await page.getByText('证据规范 · 核验条件').click();
   await expect(page.locator('.bridge-experts pre')).toContainText('先核对水样来源');
+  await expect(page.getByRole('button', { name: '请专家发言', exact: true })).toBeEnabled();
   await page.screenshot({ path: 'test-results/seat-bridge.png', fullPage: true });
   await page.getByRole('button', { name: '停止监听', exact: true }).click();
   await expect(page.getByText('监听已停止，会议记录已保留')).toBeVisible();
