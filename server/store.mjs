@@ -7,9 +7,11 @@ import { DOCUMENT_SCOPES, documentScope } from "./knowledge.mjs";
 export function createStore(root, database = join(root, "data", "seat.sqlite")) {
   mkdirSync(join(root, "data"), { recursive: true });
   const db = new DatabaseSync(database);
-  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, payload TEXT NOT NULL);");
+  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS minutes_workspaces (id TEXT PRIMARY KEY, payload TEXT NOT NULL);");
   const putSession = db.prepare("INSERT OR REPLACE INTO sessions VALUES (?, ?)");
   const putDocument = db.prepare("INSERT OR REPLACE INTO documents VALUES (?, ?)");
+  const insertWorkspace = db.prepare("INSERT OR IGNORE INTO minutes_workspaces VALUES (?, ?)");
+  const updateWorkspace = db.prepare("UPDATE minutes_workspaces SET payload = ? WHERE id = ? AND json_extract(payload, '$.revision') = ?");
   for (const file of readdirSync(join(root, "knowledge")).filter(f => f.endsWith(".md"))) {
     const id = "sample-" + file;
     if (!db.prepare("SELECT id FROM documents WHERE id = ?").get(id)) {
@@ -21,6 +23,11 @@ export function createStore(root, database = join(root, "data", "seat.sqlite")) 
     createSession(options = {}) { const s = { id: randomUUID(), title: options.title || "订单服务 · 技术方案评审", expertRole: options.expertRole || "architecture", createdAt: new Date().toISOString(), status: "active", segments: [], messages: [], decisions: [], audioSeconds: 0 }; this.save(s); return s; },
     get(id) { const row = db.prepare("SELECT payload FROM sessions WHERE id = ?").get(id); return row ? JSON.parse(row.payload) : null; },
     save(session) { putSession.run(session.id, JSON.stringify(session)); },
+    getMinutesWorkspace(id) { const row = db.prepare("SELECT payload FROM minutes_workspaces WHERE id = ?").get(id); return row ? JSON.parse(row.payload) : null; },
+    saveMinutesWorkspace(id, workspace, revision) {
+      const payload = JSON.stringify({ workspace, revision: revision + 1 });
+      return (revision === 0 ? insertWorkspace.run(id, payload) : updateWorkspace.run(payload, id, revision)).changes === 1;
+    },
     documents() { return db.prepare("SELECT payload FROM documents").all().map(row => { const d = JSON.parse(row.payload); return { ...d, scope: documentScope(d) }; }); },
     addDocument(title, content, scope = "shared") { if (!DOCUMENT_SCOPES.includes(scope)) throw new Error("未知知识范围。"); const d = { id: randomUUID(), title, content, scope, origin: "本地上传", createdAt: new Date().toISOString() }; putDocument.run(d.id, JSON.stringify(d)); return d; },
     setDocumentScope(id, scope) {

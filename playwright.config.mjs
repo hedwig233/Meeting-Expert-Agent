@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
-  testMatch: ["ui.spec.mjs", "bridge-ui.spec.mjs"],
+  testMatch: ["ui.spec.mjs", "bridge-ui.spec.mjs", "minutes-workspace-ui.spec.mjs"],
   timeout: 65000,
   expect: { timeout: 10000 },
   workers: 1,

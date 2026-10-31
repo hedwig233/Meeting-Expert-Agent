@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { mockWorkspaces } from './minutes-workspace-fixture.mjs';
 
 const quote = '周宁负责整理需求清单，本周五前完成，优先级高。';
 const minutes = `迭代周会\n参会人：周宁、林晓\n${quote}\n林晓负责发布。`;
 const fixture = { title: '迭代周会', summary: '确认需求和交付分工。', participants: ['周宁', '林晓'], notice: '', tasks: [{ id: 'task-1', title: '整理需求清单', description: '整理新版工作台需求并评审', owner: '周宁', involvement: '负责人', deadline: '本周五', priority: 'high', sourceQuote: quote, expertId: 'product', expertReason: '协助拆解验收范围', needsConfirmation: false }] };
 
 async function mockMinutes(page) {
+  await mockWorkspaces(page);
   await page.route('**/api/minutes/config', route => route.fulfill({ json: { ready: true, model: 'test-model' } }));
   await page.route('**/api/minutes', route => route.fulfill({ json: { meeting: fixture, model: 'test-model' } }));
 }

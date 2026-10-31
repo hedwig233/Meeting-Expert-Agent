@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import express from 'express';
 import { mountMinutesRoutes, parseMinutes, parseAnswer, resolveMinutesConfig } from '../server/minutes.mjs';
 
@@ -32,6 +35,40 @@ test('minutes model settings honor overrides and do not reuse an incompatible Ch
   assert.equal(resolveMinutesConfig({ llmProvider: 'qwen', qwenModel: 'qwen-plus' }, { MINUTES_API_KEY: 'test' }).model, 'gpt-6.1-sol');
   const next = resolveMinutesConfig({ llmProvider: 'openai_next', qwenApiKey: 'next-key', qwenBaseUrl: 'https://next.invalid/v1', qwenModel: 'next-model' }, { OPENAI_BASE_URL: 'https://api.openai.com/v1', OPENAI_MODEL: 'unused', NEXT_API_KEY: 'next-key' });
   assert.equal(next.apiKey, 'next-key'); assert.equal(next.baseUrl, 'https://next.invalid/v1'); assert.equal(next.model, 'next-model');
+  const openai = resolveMinutesConfig({}, { OPENAI_API_KEY: 'openai-key', OPENAI_MODEL: 'openai-model' });
+  assert.equal(openai.apiKey, 'openai-key'); assert.equal(openai.baseUrl, 'https://api.openai.com/v1'); assert.equal(openai.model, 'openai-model');
+  const nextEnv = resolveMinutesConfig({}, { NEXT_API_KEY: 'next-key', NEXT_MODEL: 'next-model' });
+  assert.equal(nextEnv.apiKey, 'next-key'); assert.equal(nextEnv.baseUrl, 'https://api.openai-next.com/v1'); assert.equal(nextEnv.model, 'next-model');
+  const explicit = { apiKey: 'explicit-key', baseUrl: 'https://explicit.invalid/v1', model: 'explicit-model' };
+  assert.deepEqual(resolveMinutesConfig({ minutes: explicit }, {}), explicit);
+});
+
+test('Codex credentials never enable minutes or chat without project credentials', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seat-minutes-credentials-'));
+  const authFile = join(directory, 'auth.json'); const codexKey = 'codex-fixture-key';
+  try {
+    writeFileSync(authFile, JSON.stringify({ OPENAI_API_KEY: codexKey }));
+    const settings = resolveMinutesConfig({}, { CODEX_HOME: directory });
+    assert.equal(settings.apiKey, undefined);
+    const app = express(); app.use(express.json()); let modelRequests = 0;
+    mountMinutesRoutes(app, settings, { fetchModel: async () => { modelRequests++; throw new Error('Unexpected model request'); } });
+    const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+    const base = 'http://127.0.0.1:' + server.address().port;
+    try {
+      const config = await (await fetch(base + '/api/minutes/config')).json();
+      assert.equal(config.ready, false); assert(!JSON.stringify(config).includes(codexKey));
+      for (const [path, body] of [
+        ['/api/minutes', { person: '周宁', minutes }],
+        ['/api/chat', { question: '下一步？', context: minutes, expert: { id: 'product', name: '产品专家' } }],
+      ]) {
+        const result = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        assert.equal(result.status, 503);
+        const error = (await result.json()).error;
+        assert.match(error, /尚未配置模型密钥/); assert(!error.includes(codexKey));
+      }
+      assert.equal(modelRequests, 0);
+    } finally { await new Promise(resolve => server.close(resolve)); }
+  } finally { unlinkSync(authFile); rmdirSync(directory); }
 });
 
 test('API validates inputs, uses Responses with the original context, and redacts upstream errors', async () => {

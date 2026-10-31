@@ -33,8 +33,10 @@ export function createApplication({ root, database, config = {}, speechSynthesiz
     if (origin && origin !== "http://" + req.headers.host && origin !== "https://" + req.headers.host) return res.status(403).json({ error: "只允许同源请求。" });
     res.setHeader("X-Content-Type-Options", "nosniff"); next();
   });
+  app.use('/api/minutes/workspaces', express.json({ limit: '16mb' }));
+  app.use('/api/minutes/workspaces', (error, req, res, next) => res.status(error.type === 'entity.too.large' ? 413 : 400).json({ error: error.type === 'entity.too.large' ? '工作台超过 16 MiB 保存上限，请先导出记录，再开启新会议。' : '工作台保存请求格式错误。' }));
   app.use(express.json({ limit: "512kb" }));
-  mountMinutesRoutes(app, resolveMinutesConfig(config));
+  mountMinutesRoutes(app, resolveMinutesConfig(config), { store });
   const send = (socket, event) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); };
   const broadcast = (id, event) => { for (const peer of peers.get(id) || []) send(peer, event); };
   const requireSession = (req, res, next) => { req.session = store.get(req.params.id); if (!req.session) return res.status(404).json({ error: "会议不存在。" }); next(); };

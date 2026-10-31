@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { wavHeader } from '../server/asr.mjs';
+import { mockWorkspaces } from './minutes-workspace-fixture.mjs';
 
 test('shared enterprise knowledge uploads, previews and changes scope from either page', async ({ page }) => {
   await mockBridge(page);
@@ -102,6 +103,7 @@ async function mockBridge(page, withAudio = true) {
     if (url.pathname.endsWith('/cancel')) return route.fulfill({ json: { ok: true } });
     return route.fulfill({ json: session });
   });
+  await mockWorkspaces(page);
   await page.addInitScript(({ withAudio }) => {
     window.__bridgeAudioFrames = 0; window.__routedSink = ''; window.__bridgeCaptureRequests = 0;
     HTMLMediaElement.prototype.setSinkId = async function(id) { window.__routedSink = id; };

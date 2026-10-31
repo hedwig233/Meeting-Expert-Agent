@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownToLine, Check, ChevronRight, CircleHelp, FileText, LoaderCircle, MessageSquare, Plus, Search, Send, ShieldCheck, Sparkles, Upload, UserRound, X } from 'lucide-react';
-import type { Answer, Discussion, Expert, Meeting, Record, Task } from './minutes-types';
+import type { Answer, Discussion, Expert, Meeting, MinutesWorkspace, Record, Task } from './minutes-types';
+import { isMinutesWorkspace } from './minutes-workspace.mjs';
 import WorkspaceNav from './WorkspaceNav';
 import './minutes.css';
 
@@ -13,13 +14,28 @@ const catalog: Expert[] = [
   { id: 'custom', key: 'custom', name: '任务规划专家', description: '梳理任务步骤、依赖、时间安排与协作' },
 ];
 const sample = '产品迭代周会纪要\n参会人：周宁、林晓、张三\n1. 周宁负责整理新版工作台的需求清单，本周五前提交评审，优先级高。\n2. 张三负责数据库迁移方案，周宁协助确认业务验收范围，下周三前完成。\n3. 林晓负责更新帮助文档，周宁上周已完成旧版文档的校对。\n4. 团队建议由周宁牵头梳理跨部门反馈，负责人和截止时间仍待确认。';
+class ApiError extends Error {
+  constructor(message: string, public status: number) { super(message); }
+}
 async function api<T>(path: string, body?: unknown, signal?: AbortSignal, method?: string): Promise<T> {
   const response = await fetch('/api' + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal });
-  const data = await response.json(); if (!response.ok) throw new Error(data.error || '请求失败，请重试。'); return data;
+  const data = await response.json(); if (!response.ok) throw new ApiError(data.error || '请求失败，请重试。', response.status); return data;
 }
 const uid = () => crypto.randomUUID();
 const escapePattern = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export default function MinutesRoom() {
+  const [identity] = useState(() => {
+    try {
+      const id = sessionStorage.getItem('seat-minutes-workspace') || uid();
+      sessionStorage.setItem('seat-minutes-workspace', id); return { id, error: '' };
+    } catch { return { id: uid(), error: '浏览器无法记住当前工作台编号，请允许会话存储后刷新；离开前请导出记录。' }; }
+  });
+  const [restoring, setRestoring] = useState(true); const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const [restoreError, setRestoreError] = useState(''); const [persistenceError, setPersistenceError] = useState('');
+  const [saveStatus, setSaveStatus] = useState<'saving' | 'saved' | 'error'>('saved');
+  const latestSnapshot = useRef(''); const savedSnapshot = useRef<string | null>(null);
+  const revision = useRef(0);
+  const saveJob = useRef<Promise<void> | null>(null); const cacheKey = 'seat-minutes-pending-' + identity.id;
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]); const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [experts, setExperts] = useState<Expert[]>([]); const [activeExpert, setActiveExpert] = useState('');
@@ -42,6 +58,95 @@ export default function MinutesRoom() {
   const pending = tasks.filter(task => !task.completed).length;
   const members = [...new Set([...(meeting?.participants || []), ...experts.map(item => item.name)])].sort((a, b) => b.length - a.length);
   const candidates = mention ? members.filter(name => name.toLowerCase().includes(mention.query.toLowerCase())) : [];
+  const workspace = useMemo<MinutesWorkspace>(() => ({ version: 1, meeting, tasks, selectedTaskId, experts, activeExpert, records, discussion, question, search, tab, person, minutes, filename }), [meeting, tasks, selectedTaskId, experts, activeExpert, records, discussion, question, search, tab, person, minutes, filename]);
+  latestSnapshot.current = JSON.stringify(workspace);
+
+  useEffect(() => {
+    const controller = new AbortController(); setRestoring(true); setRestoreError('');
+    (async () => {
+      try {
+        const result = await api<{ workspace: unknown; revision: number }>('/minutes/workspaces/' + identity.id, undefined, controller.signal);
+        if (!Number.isSafeInteger(result.revision) || result.revision < 0) throw new Error('数据库中的工作台版本无效，请检查本地服务。');
+        if (result.workspace !== null && !isMinutesWorkspace(result.workspace)) throw new Error('数据库中的纪要工作台格式无效，请先备份数据库后检查。');
+        let restored = result.workspace;
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          let pending: unknown;
+          try { pending = JSON.parse(cached); } catch { throw new Error('未保存的浏览器缓存无法解析，请选择从 SQLite 重新恢复。'); }
+          if (!isMinutesWorkspace(pending)) throw new Error('未保存的浏览器缓存格式无效，请选择从 SQLite 重新恢复。');
+          restored = pending;
+        }
+        if (controller.signal.aborted) return;
+        revision.current = result.revision;
+        savedSnapshot.current = result.workspace === null ? null : JSON.stringify(result.workspace);
+        if (restored) {
+          setMeeting(restored.meeting); setTasks(restored.tasks); setSelectedTaskId(restored.selectedTaskId); setExperts(restored.experts); setActiveExpert(restored.activeExpert);
+          setRecords(restored.records.map(item => item.status === 'loading' ? { ...item, status: 'error', error: '上一次回答因页面离开或刷新中断，请重试。' } : item));
+          setDiscussion(restored.discussion); setQuestion(restored.question); setSearch(restored.search); setTab(restored.tab);
+          setPerson(restored.person); setMinutes(restored.minutes); setFilename(restored.filename);
+        }
+        setRestoring(false);
+      } catch (e) { if (!controller.signal.aborted) setRestoreError(e instanceof ApiError && e.status === 404 ? '当前后端未加载纪要工作台接口，请重启后端服务后点击“重试恢复”。' : (e as Error).message); }
+    })();
+    return () => controller.abort();
+  }, [identity.id, cacheKey, restoreAttempt]);
+
+  function reportSaveError(e: unknown) { setSaveStatus('error'); setPersistenceError('工作台尚未保存：' + (e instanceof Error ? e.message : '请检查本地服务并重试。')); }
+  function saveWorkspace(): Promise<void> {
+    if (restoring) return Promise.reject(new Error('请先恢复当前工作台。'));
+    if (saveJob.current) return saveJob.current.then(() => saveWorkspace());
+    const job = (async () => {
+      while (savedSnapshot.current !== latestSnapshot.current) {
+        const snapshot = latestSnapshot.current; setSaveStatus('saving');
+        try {
+          const result = await api<{ revision: number }>('/minutes/workspaces/' + identity.id, { workspace: JSON.parse(snapshot), revision: revision.current }, undefined, 'PUT');
+          if (result.revision !== revision.current + 1) throw new Error('服务未确认正确的工作台保存版本，请重试。');
+          revision.current = result.revision;
+        } catch (e) {
+          if (!(e instanceof ApiError) || e.status !== 409) throw e;
+          const current = await api<{ workspace: unknown; revision: number }>('/minutes/workspaces/' + identity.id);
+          if (!Number.isSafeInteger(current.revision) || current.revision < 0 || JSON.stringify(current.workspace) !== snapshot) throw e;
+          revision.current = current.revision;
+        }
+        savedSnapshot.current = snapshot;
+      }
+      setSaveStatus('saved'); setPersistenceError('');
+      try { sessionStorage.removeItem(cacheKey); }
+      catch { setPersistenceError('工作台已保存到 SQLite，但浏览器未能清理临时缓存，请检查会话存储权限。'); }
+    })();
+    saveJob.current = job.finally(() => { saveJob.current = null; });
+    return saveJob.current;
+  }
+  useEffect(() => {
+    if (restoring) return;
+    try { sessionStorage.setItem(cacheKey, latestSnapshot.current); }
+    catch { setPersistenceError('浏览器无法暂存未完成的保存，请等待 SQLite 保存成功再离开。'); }
+    void saveWorkspace().catch(reportSaveError);
+  }, [restoring, workspace]);
+  useEffect(() => {
+    const leaving = (event: BeforeUnloadEvent) => {
+      if (restoring) return;
+      if (savedSnapshot.current === latestSnapshot.current) return;
+      try {
+        if (identity.error) throw new Error(identity.error);
+        sessionStorage.setItem(cacheKey, latestSnapshot.current);
+      } catch { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', leaving);
+    return () => window.removeEventListener('beforeunload', leaving);
+  }, [cacheKey, identity.error, restoring]);
+  async function retrySave() {
+    try {
+      const result = await api<{ revision: number }>('/minutes/workspaces/' + identity.id);
+      if (!Number.isSafeInteger(result.revision) || result.revision < 0) throw new Error('工作台版本无效，请检查本地服务。');
+      revision.current = result.revision; await saveWorkspace();
+    } catch (e) { reportSaveError(e); }
+  }
+  async function navigate(href: string) {
+    if (restoring && restoreError) { location.assign(href); return; }
+    try { await saveWorkspace(); location.assign(href); }
+    catch (e) { reportSaveError(e); }
+  }
 
   useEffect(() => { api<{ ready: boolean; model: string }>('/minutes/config').then(setModelConfig).catch(e => setError(e.message)); }, []);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 3500); return () => clearTimeout(timer); }, [toast]);
@@ -168,13 +273,16 @@ export default function MinutesRoom() {
     </article>;
   }
 
+  if (restoring) return <div className="app-shell minutes-room"><WorkspaceNav page="minutes" onNavigate={navigate} /><div className="workspace"><main><p role="status">{restoreError ? '纪要工作台恢复失败' : '正在恢复本机纪要工作台…'}</p>{restoreError && <div className="alert" role="alert"><span>{restoreError}</span><button onClick={() => setRestoreAttempt(value => value + 1)}>重试恢复</button>{restoreError.includes('缓存') && <button onClick={() => { try { sessionStorage.removeItem(cacheKey); setRestoreAttempt(value => value + 1); } catch { setRestoreError('浏览器无法清理缓存，请检查会话存储权限。'); } }}>从 SQLite 重新恢复</button>}</div>}</main></div></div>;
+
   return <div className="app-shell minutes-room">
-    <WorkspaceNav page="minutes" person={meeting?.person} />
+    <WorkspaceNav page="minutes" person={meeting?.person} onNavigate={navigate} />
     <div className="workspace">
       <header className="topbar"><div className="wordmark">席位 <span>SEAT</span></div><div className="breadcrumb">工作空间 <ChevronRight size={13} /> 专家会议室</div><div className="top-actions"><span className="local-label"><ShieldCheck size={14} /> 本地工作空间</span><button className="button ghost small" onClick={() => meeting ? setClearConfirm(true) : openImport()}><Plus size={15} /> 新会议</button></div></header>
       <main>
         <div className="page-heading"><div><div className="eyebrow">A PLACE FOR EXPERTISE</div><h1>让会议讨论，成为行动<span>。</span></h1><p>先找到与你相关的任务，再让专业知识加入讨论。</p></div>{meeting && <div className="session-indicator"><span className="status-dot" />{meeting.person} · {pending} 项待办</div>}</div>
         {error && <div className="alert" role="alert"><CircleHelp size={17} /><span>{error}</span><button aria-label="关闭提示" onClick={() => setError('')}><X size={15} /></button></div>}
+        {(persistenceError || identity.error) && <div className="alert" role="alert"><CircleHelp size={17} /><span>{persistenceError || identity.error}</span><button onClick={() => void retrySave()}>重试保存</button></div>}
         <div className="workflow-strip"><span className={!meeting ? 'current' : 'done'}><span>{meeting ? <Check size={12} /> : '01'}</span> 导入纪要</span><ChevronRight size={14} /><span className={meeting ? 'current' : ''}><span>02</span> 整理我的任务</span><ChevronRight size={14} /><span className={experts.length ? 'current' : ''}><span>03</span> 按需请专家协助</span></div>
         <div className="meeting-grid">
           <section className="meeting-panel panel">
@@ -216,13 +324,13 @@ export default function MinutesRoom() {
           </section>
         </div>
         <div className="outcome-bar minutes-outcome"><div className="outcome-icon"><FileText size={20} /></div><div><h3>{meeting ? `${pending} 项待办，${records.filter(item => item.confirmed).length} 项建议已确认` : '从讨论到行动，让下一步更清晰'}</h3><p>{meeting ? '任务、讨论和专家回答可一起导出，便于后续跟进。' : '保留任务依据，按需邀请专家，把决定留给你。'}</p></div><button className="button ghost small" onClick={exportMeeting} disabled={!meeting}><ArrowDownToLine size={15} />导出会议记录</button></div>
-        <footer className="page-footer"><span>SEAT · 让专业知识拥有一个席位</span><span>当前页面内保存 · 刷新后需重新导入 <button className="text-button" disabled={!meeting} onClick={() => setClearConfirm(true)}>清空工作台</button></span></footer>
+        <footer className="page-footer"><span>SEAT · 让专业知识拥有一个席位</span><span><span role="status" aria-label="工作台保存状态">{saveStatus === 'saving' ? '正在保存到本机 SQLite…' : saveStatus === 'error' ? '尚未保存，请重试或导出' : '已保存到本机 SQLite · 导航和刷新可恢复'}</span> <button className="text-button" disabled={!meeting} onClick={() => setClearConfirm(true)}>清空工作台</button></span></footer>
       </main>
     </div>
     {(modal || confirmation || clearConfirm) && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) { closeModal(); setConfirmation(null); setClearConfirm(false); } }}>
       <div className={'modal ' + (modal === 'import' ? 'minutes-import-modal' : '')} role="dialog" aria-modal="true" aria-labelledby="room-modal-title">
         <div className="modal-heading"><div><div className="eyebrow">SEAT · EXPERT WORKSPACE</div><h2 id="room-modal-title">{confirmation ? '确认会议建议' : clearConfirm ? '开启新的会议工作台' : modal === 'import' ? '导入会议纪要' : modal === 'source' ? '原始会议纪要' : modal === 'expert' ? '为任务选择专家' : '企业知识库'}</h2></div><button className="icon-button" aria-label="关闭窗口" onClick={() => { closeModal(); setConfirmation(null); setClearConfirm(false); }}><X size={20} /></button></div>
-        {confirmation ? <><p>{confirmation.expert.name}建议：</p><div className="document-content">{confirmation.answer?.action}</div><p className="muted small-print">确认后仅在当前会议记录模拟执行结果。</p><div className="modal-actions"><button className="button ghost" onClick={() => setConfirmation(null)}>返回讨论</button><button className="button primary" onClick={() => { const id = confirmation.id; setRecords(previous => previous.map(item => item.id === id ? { ...item, confirmed: true } : item)); setConfirmation(null); setToast('已确认并记录模拟执行结果。'); }}>确认并模拟执行</button></div></> : clearConfirm ? <><p>当前纪要、任务、讨论和专家回答将从工作台清空。需要留存时，请先导出记录。</p><div className="modal-actions"><button className="button ghost" onClick={() => setClearConfirm(false)}>保留当前会议</button><button className="button primary" onClick={() => { resetWorkspace(); setPerson(''); setMinutes(''); setFilename(''); setClearConfirm(false); setModal('import'); }}>清空并导入新纪要</button></div></> : modal === 'import' ? <>
+        {confirmation ? <><p>{confirmation.expert.name}建议：</p><div className="document-content">{confirmation.answer?.action}</div><p className="muted small-print">确认后仅在当前会议记录模拟执行结果。</p><div className="modal-actions"><button className="button ghost" onClick={() => setConfirmation(null)}>返回讨论</button><button className="button primary" onClick={() => { const id = confirmation.id; setRecords(previous => previous.map(item => item.id === id ? { ...item, confirmed: true } : item)); setConfirmation(null); setToast('已确认并记录模拟执行结果。'); }}>确认并模拟执行</button></div></> : clearConfirm ? <><p>当前纪要、任务、讨论和专家回答将从工作台及本机保存内容中清空。需要留存时，请先导出记录。</p><div className="modal-actions"><button className="button ghost" onClick={() => setClearConfirm(false)}>保留当前会议</button><button className="button primary" onClick={() => { resetWorkspace(); setPerson(''); setMinutes(''); setFilename(''); setClearConfirm(false); setModal('import'); }}>清空并导入新纪要</button></div></> : modal === 'import' ? <>
           <p className="muted">填写纪要中的本人姓名，整理你负责、协作与需要确认的安排。</p>
           <label>本人姓名<input autoFocus maxLength={40} value={person} disabled={importing} placeholder="与纪要里的姓名一致，例如：周宁" onChange={event => setPerson(event.target.value)} /></label>
           <div className="minutes-input-head"><span>纪要文本</span><button className="text-button" disabled={importing} onClick={() => fileInput.current?.click()}><Upload size={13} />导入 .txt / .md</button></div>
