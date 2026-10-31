@@ -1,0 +1,10 @@
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const path = join(dirname(fileURLToPath(import.meta.url)), "..", ".env");
+let text = existsSync(path) ? readFileSync(path, "utf8") : "";
+text = text.replace(/^LLM_PROVIDER=.*\r?\n?/gm, "");
+const defaults = { OPENAI_API_KEY: "", OPENAI_BASE_URL: "https://api.openai.com/v1", OPENAI_MODEL: "gpt-5.6-terra", OPENAI_REASONING_EFFORT: "none" };
+const missing = Object.entries(defaults).filter(([key]) => !new RegExp("^" + key + "=", "m").test(text)).map(([key, value]) => key + "=" + value);
+writeFileSync(path, "LLM_PROVIDER=openai\n" + missing.join("\n") + "\n" + text, { mode: 0o600 });
+console.log("已选择 OpenAI，保留已有凭证与 DUI 配置。请在本机 .env 填写 OPENAI_API_KEY；未读取或打印密钥。");

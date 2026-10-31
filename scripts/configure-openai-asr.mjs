@@ -1,0 +1,10 @@
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const path = join(dirname(fileURLToPath(import.meta.url)), "..", ".env");
+let text = existsSync(path) ? readFileSync(path, "utf8") : "";
+text = text.replace(/^ASR_PROVIDER=.*\r?\n?/gm, "");
+const defaults = { OPENAI_API_KEY: "", OPENAI_TRANSCRIPTION_MODEL: "gpt-live-transcribe" };
+const missing = Object.entries(defaults).filter(([key]) => !new RegExp("^" + key + "=", "m").test(text)).map(([key, value]) => key + "=" + value);
+writeFileSync(path, "ASR_PROVIDER=openai\n" + missing.join("\n") + "\n" + text, { mode: 0o600 });
+console.log("已选择 OpenAI 实时转写，保留现有 Key、专家模型和 DUI 配置。请填写 OPENAI_API_KEY 后重启后端。");

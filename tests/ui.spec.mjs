@@ -1,0 +1,55 @@
+import { test, expect } from "@playwright/test";
+
+test("audio discussion to expert evidence, correction and confirmed decision", async ({ page }) => {
+  const errors = []; page.on("pageerror", e => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.getByText("会议连接就绪")).toBeVisible();
+  await expect(page.getByRole("button", { name: /邀请专家加入/ })).toBeDisabled();
+  await page.screenshot({ path: "test-results/seat-initial.png", fullPage: true });
+  await page.getByRole("button", { name: "播放会议音频" }).click();
+  await expect(page.locator(".transcript-line").filter({ hasText: "自动重试创建订单" })).toBeVisible({ timeout: 40000 });
+  await page.getByRole("button", { name: /邀请专家加入/ }).click();
+  await expect(page.locator(".finding").first()).toContainText("不支持幂等");
+  await expect(page.getByRole("button", { name: "播放会议音频" })).toBeVisible();
+  await page.getByRole("button", { name: /创建订单 POST/ }).first().click();
+  await expect(page.getByRole("dialog")).toContainText("不支持幂等");
+  await page.getByRole("button", { name: "关闭窗口" }).click();
+  await page.screenshot({ path: "test-results/seat-expert.png", fullPage: true });
+  await page.getByRole("button", { name: /补充：我们已经实现幂等/ }).click();
+  await expect(page.locator(".finding").last()).toContainText("版本差异");
+  await page.getByRole("button", { name: "记录为决策" }).last().click();
+  await page.getByLabel("确认后的方案").fill("先核对接口版本并补齐并发幂等测试，再启用自动重试。");
+  await page.getByLabel("负责人").fill("阿周");
+  await page.getByLabel("截止时间").fill("2026-11-02");
+  await page.getByRole("button", { name: "确认并记录" }).click();
+  await page.getByRole("button", { name: /已确认决策/ }).click();
+  await expect(page.locator(".decision-item")).toContainText("阿周");
+  await expect(page.locator(".decision-item")).toContainText("2026-11-02");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("link", { name: "导出会议记录" }).click();
+  const download = await downloadPromise; expect(download.suggestedFilename()).toBe("meeting-review.md");
+  await page.screenshot({ path: "test-results/seat-decision.png", fullPage: true });
+  await page.getByRole("button", { name: "结束会议" }).click();
+  await expect(page.locator(".session-indicator")).toContainText("会议已结束");
+  await expect(page.getByLabel("向专家提问")).toBeDisabled();
+  await page.getByRole("button", { name: "新会议" }).click();
+  await expect(page.locator(".transcript-line")).toHaveCount(0);
+  await expect(page.locator(".expert-message")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("knowledge documents and manual input work at narrow viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByText("会议连接就绪")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "企业知识库", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("订单服务接口契约");
+  await page.getByRole("button", { name: "关闭窗口" }).click();
+  await page.getByRole("button", { name: "文字补充会议内容" }).click();
+  await page.getByLabel("补充会议内容", { exact: true }).fill("我们讨论办公室装饰，现在没有技术方案需要评审。");
+  await page.getByRole("button", { name: "加入讨论" }).click();
+  await page.getByRole("button", { name: /邀请专家加入/ }).click();
+  await expect(page.locator(".finding")).toContainText("目前不能确认存在设计问题");
+  await page.screenshot({ path: "test-results/seat-mobile.png", fullPage: true });
+});
